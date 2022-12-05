@@ -1,106 +1,208 @@
-
 #include <iostream>
+#include <stdlib.h>
+#include <time.h>
 #include <mutex>
-#include <queue>
-#include <sstream>
 #include <thread>
 
+using namespace std;
 
-template <typename T>
-class ConcurrentQueue {
-public:
-    void push(const T& data)
+template<class T>
+struct Node
+{
+    Node(T x)
     {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        queue_.push(data);
-        condition.notify_one();
+        value = x;
+        next = 0;
+    }
+    T value;
+    Node<T>* next;
+    mutex candado;
+};
+
+template<class T>
+struct Lista
+{
+    Lista()
+    {
+        head = new Node<T>(-1);
+        tail = new Node<T>(-2);
+        head->next = tail;
+        nelem = 0;
+
+    }
+    bool Add(T x)
+    {
+        while (true) {
+
+            Node<T>* n = new Node<T>(x);
+            Node<T>* predecesor = head;
+            Node<T>* actual = head->next;
+
+
+            predecesor->candado.lock();
+            actual->candado.lock();
+
+            while (actual->value != -2 && actual->value < x)
+            {
+                predecesor->candado.unlock();
+                actual->candado.unlock();
+
+                predecesor = actual;
+                actual = actual->next;
+
+                predecesor->candado.lock();
+                actual->candado.lock();
+            }
+
+            if (actual->value == x)
+            {
+                predecesor->candado.unlock();
+                actual->candado.unlock();
+                return false;
+            }
+
+            predecesor->next = n;
+            n->next = actual;
+            nelem++;
+            predecesor->candado.unlock();
+            actual->candado.unlock();
+            
+            return true;
+        }
+
+    }
+ 
+    bool borrar(T x)
+    {
+        while (true) {
+
+            Node<T>* predecesor = head;
+            Node<T>* actual = head->next;
+
+
+            predecesor->candado.lock();
+            actual->candado.lock();
+
+            while (actual->value != -2 && actual->value < x)
+            {
+                predecesor->candado.unlock();
+                actual->candado.unlock();
+
+                predecesor = actual;
+                actual = actual->next;
+
+                predecesor->candado.lock();
+                actual->candado.lock();
+            }
+
+            if (actual->value != x)
+            {
+                predecesor->candado.unlock();
+                actual->candado.unlock();
+                return false;
+            }
+
+            predecesor->next = actual->next;
+            
+            nelem--;
+            predecesor->candado.unlock();
+            actual->candado.unlock();
+            delete actual;
+            return true;
+        }
+
     }
 
-    T pop()
+    void print()
     {
-        std::unique_lock<std::mutex> lock(queue_mutex_);
-        while (queue_.empty())
+        Node<T>* aux1;
+        aux1 = head->next;
+        cout << "head";
+        while (aux1->value != -2)
         {
-            condition.wait(lock);
+            cout << "->" << aux1->value;
+            aux1 = aux1->next;
         }
-        T result = queue_.front();
-        queue_.pop();
-        return result;
+        cout << endl;
     }
+    
+    Node<T>* n;
+    Node<T>* head;
+    Node<T>* tail;
 
-private:
-    std::queue<T> queue_;
-    std::mutex queue_mutex_;
-    std::condition_variable condition;
+    
+
+    int nelem;
 };
 
-class Producer {
-public:
-    Producer(unsigned int id, ConcurrentQueue<std::string>* queue)
-        : id_(id), queue_(queue) {}
+template<class T>
+struct ADD
+{
 
-    void operator()() {
-        int data = 0;
-        while (true) {
-            std::stringstream stream;
-            stream << "Producer: " << id_ << " Data: " << data++ << std::endl;
-            queue_->push(stream.str());
-            std::cout << stream.str() << std::endl;
+    Lista<T>* list_;
+    int min_, max_;
+    ADD(Lista<T>& list, int min, int max)
+    {
+        list_ = &list;
+        min_ = min;
+        max_ = max;
+    }
+
+    void operator()(int n_operations)
+    {
+        for (int x = 0; x < n_operations; x++)
+        {
+            int number = min_ + rand() % (max_);
+            cout << "voy a añadir: " << number << endl;
+            list_->Add(number);
         }
     }
-
-private:
-    unsigned int id_;
-    ConcurrentQueue<std::string>* queue_;
 };
 
-class Consumer {
-public:
-    Consumer(unsigned int id, ConcurrentQueue<std::string>* queue)
-        : id_(id), queue_(queue) {}
+template<class T>
+struct BORRAR
+{
 
-    void operator()() {
-        while (true) {
-            std::stringstream stream;
-            stream << "Consumer: " << id_ << " Data: " << queue_->pop().c_str()
-                << std::endl;
+    Lista<T>* list_;
+    int min_, max_;
+    BORRAR(Lista<T>& list, int min, int max)
+    {
+        list_ = &list;
+        min_ = min;
+        max_ = max;
+    }
 
-            std::cout << stream.str() << std::endl;
+    void operator()(int n_operations)
+    {
+        for (int x = 0; x < n_operations; x++)
+        {
+            int number = min_ + rand() % (max_);
+            cout << "voy a borrar: " << number << endl;
+            list_->borrar(number);
         }
     }
-
-private:
-    unsigned int id_;
-    ConcurrentQueue<std::string>* queue_;
 };
 
-int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        return 1;
-    }
+
+int main()
+{
+    srand(time(NULL));
+    thread* threads[2];
+    Lista<int> A;
+    ADD<int> Add1(A, 1, 100);
+    BORRAR<int> borrar1(A, 1, 100);
+
+    thread first(Add1, 100);
+    thread second(borrar1, 80);
+
+    threads[0] = &first;
+    threads[1] = &second;
+
+    threads[0]->join();
+    threads[1]->join();
+
+    A.print();
 
 
-    int number_producers = std::stoi(argv[1]);
-    int number_consumers = std::stoi(argv[2]);
 
-    ConcurrentQueue<std::string> queue;
-
-
-    std::vector<std::thread*> producers;
-    for (unsigned int i = 0; i < number_producers; ++i) {
-        std::thread* producer_thread = new std::thread(Producer(i, &queue));
-        producers.push_back(producer_thread);
-    }
-
-    std::vector<std::thread*> consumers;
-    for (unsigned int i = 0; i < number_consumers; ++i) {
-        std::thread* consumer_thread = new std::thread(Consumer(i, &queue));
-        consumers.push_back(consumer_thread);
-    }
-
-    int stop;
-    std::cin >> stop;
-    // join
-
-    return 0;
 }
